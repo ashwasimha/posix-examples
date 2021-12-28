@@ -1,12 +1,13 @@
 #include <iostream>
 #include <thread>
+#include <memory>
 #include "unistd.h"   
 
 #include "message_queue.h"
 #include "posix_queue.h"
 
 using namespace std;
-constexpr char MSG_QUEUE_NAME[] = "dataPointsQueue";
+constexpr char MSG_QUEUE_NAME[] = "simulatorQueue";
 constexpr unsigned int MAX_NO_OF_MESSAGES_IN_QUEUE = 10;
 constexpr unsigned int MAX_MSG_SIZE = 1024;
 constexpr unsigned int SPEED_SENSOR = 1;
@@ -18,17 +19,8 @@ struct sensorData_t{
 };
 
 // vehicle speed simulator
-void speed()
+void speed(std::shared_ptr<IMessageQueue> p_ptrMessageQueue)
 {    
-    std::unique_ptr<IMessageQueue>  m_ptrMessageQueue{new CPosixQueue()};
-    if( !(m_ptrMessageQueue->
-                openQueue(MSG_QUEUE_NAME,
-                          MAX_MSG_SIZE,
-                          MAX_NO_OF_MESSAGES_IN_QUEUE)) ){
-        cerr << "Failed to Create a message Queue in Speed" << endl;
-        exit(0);
-    }
-    
     int vehicle_speed = 0;
     while(1){
         
@@ -40,7 +32,7 @@ void speed()
         sensorData_t sensor_data;
         sensor_data.sensorType = SPEED_SENSOR;
         sensor_data.sensorValue = vehicle_speed;
-        m_ptrMessageQueue->
+        p_ptrMessageQueue->
                     writeToQueue((char*)&sensor_data,
                                  sizeof(sensorData_t));
         
@@ -50,17 +42,8 @@ void speed()
 }  
 
 // engine rpm simulator
-void rpm()
+void rpm(std::shared_ptr<IMessageQueue> p_ptrMessageQueue)
 {
-    std::unique_ptr<IMessageQueue>  m_ptrMessageQueue{new CPosixQueue()};
-    if( !(m_ptrMessageQueue->
-                openQueue(MSG_QUEUE_NAME,
-                          MAX_MSG_SIZE,
-                          MAX_NO_OF_MESSAGES_IN_QUEUE)) ){
-        cerr << "Failed to Create a message Queue in Speed" << endl;
-        exit(0);
-    }
-
     int engine_speed = 0;
     while(1){
         if(engine_speed >= 1000)
@@ -69,7 +52,7 @@ void rpm()
         sensorData_t sensor_data;
         sensor_data.sensorType = ENGINE_SENSOR;
         sensor_data.sensorValue = engine_speed;
-        m_ptrMessageQueue->
+        p_ptrMessageQueue->
                     writeToQueue((char*)&sensor_data,
                                  sizeof(sensorData_t));
 
@@ -79,22 +62,13 @@ void rpm()
     } 
 }  
 
-void ui()
+void ui(std::shared_ptr<IMessageQueue> p_ptrMessageQueue)
 {
-    std::unique_ptr<IMessageQueue>  m_ptrMessageQueue{new CPosixQueue()};
-    if( !(m_ptrMessageQueue->
-                openQueue(MSG_QUEUE_NAME,
-                          MAX_MSG_SIZE,
-                          MAX_NO_OF_MESSAGES_IN_QUEUE)) ){
-        cerr << "Failed to Create a message Queue in Speed" << endl;
-        exit(0);
-    }
-
     while(1){
         // cout << "UI Waiting for the messages" << endl;
         
         sensorData_t sensor_data;
-        if(!(m_ptrMessageQueue->
+        if(!(p_ptrMessageQueue->
           readFromQueue((char*)&sensor_data)))
         {
             cerr << "Failed to read from queue in UI" << endl;
@@ -111,19 +85,32 @@ void ui()
 
 int main()
 {
+    //create a message queue that can be passed to all three threads 
+    std::shared_ptr<IMessageQueue> posix_queue_ptr = make_shared<CPosixQueue>();
+    if( !(posix_queue_ptr->
+                openQueue(MSG_QUEUE_NAME,
+                          MAX_MSG_SIZE,
+                          MAX_NO_OF_MESSAGES_IN_QUEUE)) ){
+        cerr << "Failed to Create a message Queue in Speed" << endl;
+        exit(0);
+    }
+
     //start a component that simulates speed
-    thread speedometer(speed);
+    thread speedometer(speed, posix_queue_ptr);
     
     //start a component that simulates engine rpm
-    thread enginerpm(rpm);
+    thread enginerpm(rpm, posix_queue_ptr);
     
     // start the display thread 
-    thread display(ui);
+    thread display(ui, posix_queue_ptr);
     
     //wait for child threads to finish the task
     speedometer.join();
     enginerpm.join(); 
     display.join();
   
+    //remove the created message queue
+    posix_queue_ptr->deleteQueue();
+    
     return 0;
 }
